@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 )
 
 const databaseEndpoint = "databases"
@@ -122,8 +123,11 @@ type Rollup struct {
 
 // GetDatabase retrieves a Database using the ID specified.
 func (c Client) GetDatabase(id string) (Database, error) {
-	url := c.Config.BaseURL + "/" + c.Config.APIVersion + "/" + databaseEndpoint + "/" + id
-	req, err := http.NewRequest("GET", url, nil)
+	u, err := url.Parse(c.Config.BaseURL + "/" + c.Config.APIVersion + "/" + databaseEndpoint + "/" + id)
+	if err != nil {
+		return Database{}, err
+	}
+	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
 		return Database{}, err
 	}
@@ -151,4 +155,58 @@ func (c Client) GetDatabase(id string) (Database, error) {
 		return Database{}, err
 	}
 	return database, nil
+}
+
+// ListDatabase
+type ListDatabase struct {
+	Results []Database `json:"results"`
+	Pagination
+}
+
+type ListDatabaseQueryParam struct {
+	StartCursor string
+	PageSize    string
+}
+
+// ListDatabase lists all Databases shared with the authenticated integration. The response may contain fewer than page_size of results.
+func (c Client) ListDatabase(qp *ListDatabaseQueryParam) (ListDatabase, error) {
+	u, err := url.Parse(c.Config.BaseURL + "/" + c.Config.APIVersion + "/" + databaseEndpoint)
+	if err != nil {
+		return ListDatabase{}, err
+	}
+	q := u.Query()
+	if qp != nil {
+		if qp.StartCursor != "" {
+			q.Set("start_cursor", qp.StartCursor)
+		}
+		if qp.PageSize != "" {
+			q.Set("page_size", qp.PageSize)
+		}
+	}
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return ListDatabase{}, err
+	}
+	req.Header.Add("Authorization", "Bearer "+c.Config.Token)
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Notion-Version", c.Config.HeaderVersion)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return ListDatabase{}, err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return ListDatabase{}, errors.New("request exceeded the request limits")
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return ListDatabase{}, err
+	}
+	var databases ListDatabase
+	err = json.Unmarshal(body, &databases)
+	if err != nil {
+		return ListDatabase{}, err
+	}
+	return databases, nil
 }
